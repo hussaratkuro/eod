@@ -8,17 +8,22 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"eod/internal/storage"
+	"eod/internal/todo"
 	"eod/internal/ui"
 )
 
-const usage = `eod – End-of-Day log manager
+const usage = `eod – workday companion: end-of-day log + todo board
 
 Usage:
-  eod                       Open the current month's log
+  eod                       Open the launcher (TODO / EOD)
+  eod todo                  Go straight to the todo board
+  eod eod                   Go straight to the EOD log
   eod <directory>           Open from a specific directory
   eod import <file|dir>     Import existing txt files
 
 Data directory (default): $XDG_DATA_HOME/eod  (~/.local/share/eod)
+  EOD logs   <data>/eod_YYYY_MM.txt
+  Todo notes <data>/todo/<note>.md
 Override with: EOD_DATA_DIR environment variable
 `
 
@@ -29,10 +34,19 @@ func main() {
 	}
 
 	args := os.Args[1:]
+	mode := ui.ModeLauncher
 
 	// Handle subcommands first
 	if len(args) >= 1 {
 		switch args[0] {
+		case "todo":
+			mode = ui.ModeTodo
+			args = args[1:]
+
+		case "eod":
+			mode = ui.ModeEOD
+			args = args[1:]
+
 		case "import":
 			if len(args) < 2 {
 				fmt.Fprintln(os.Stderr, "Usage: eod import <file|directory>")
@@ -48,7 +62,13 @@ func main() {
 		default:
 			// Treat as data directory override
 			dataDir = args[0]
+			args = nil
 		}
+	}
+
+	// A directory may still follow "todo" / "eod".
+	if len(args) >= 1 {
+		dataDir = args[0]
 	}
 
 	store, err := storage.New(dataDir)
@@ -66,10 +86,23 @@ func main() {
 	// Load all available months
 	allFiles, _ := store.LoadAll()
 
-	app := ui.New(store, file, allFiles)
+	eodApp := ui.New(store, file, allFiles)
+
+	todoStore, err := todo.NewStore(dataDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: cannot open todo directory: %v\n", err)
+		os.Exit(1)
+	}
+	todoApp, err := ui.NewTodoApp(todoStore)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: cannot load todo notes: %v\n", err)
+		os.Exit(1)
+	}
+
+	root := ui.NewRoot(eodApp, todoApp, mode)
 
 	p := tea.NewProgram(
-		app,
+		root,
 		tea.WithAltScreen(),
 		tea.WithMouseCellMotion(),
 	)

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -52,6 +53,8 @@ type App struct {
 	editorDay  int // actual index into file.Days being edited, -1 = new day
 	editorName string
 	editorErr  string
+	editorUndo []editorSnapshot
+	editorRedo []editorSnapshot
 
 	auxVP viewport.Model
 
@@ -61,6 +64,14 @@ type App struct {
 
 	status    string
 	statusErr bool
+
+	// confirmDelete is set while the status bar is asking the user to confirm
+	// deleting the selected day, so a stray [d] can't wipe an entry.
+	confirmDelete bool
+
+	// todoText renders the still-open todos as editor text; the todo side
+	// installs it so the EOD editor can pull them in with Ctrl+T.
+	todoText func() string
 }
 
 func New(store *storage.Store, file *model.EODFile, allFiles []*model.EODFile) *App {
@@ -136,8 +147,32 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case viewSearch:
 			return a.updateSearch(msg)
 		}
+	default:
+		// Ctrl+Shift+Delete arrives as a raw CSI escape sequence that
+		// bubbletea does not decode into a named tea.KeyMsg, so it has to be
+		// matched here instead of in a normal key.String() switch.
+		if a.view == viewEditor && isDeleteAllSequence(msg) {
+			before := snapshotEditor(a.editorTA)
+			a.clearEditor()
+			if a.editorTA.Value() != before.value {
+				a.pushUndo(before)
+			}
+		}
 	}
 	return a, nil
+}
+
+// isDeleteAllSequence reports whether msg is the raw "\x1b[3;6~" CSI
+// sequence terminals send for Ctrl+Shift+Delete.
+func isDeleteAllSequence(msg tea.Msg) bool {
+	v := reflect.ValueOf(msg)
+	if v.Kind() != reflect.Slice || v.Type().Elem().Kind() != reflect.Uint8 {
+		return false
+	}
+	if !strings.Contains(v.Type().String(), "CSISequence") {
+		return false
+	}
+	return string(v.Bytes()) == "\x1b[3;6~"
 }
 
 func (a *App) resizeComponents() {
@@ -155,9 +190,26 @@ func (a *App) resizeComponents() {
 // ── Main view ──────────────────────────────────────────────────────────────
 
 func (a *App) updateMain(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// While a delete confirmation is pending it swallows every key: only an
+	// explicit yes deletes, anything else aborts.
+	if a.confirmDelete {
+		a.confirmDelete = false
+		switch msg.String() {
+		case "y", "Y":
+			a.deleteCurrentDay()
+		default:
+			a.setStatus("Delete cancelled.", false)
+		}
+		return a, nil
+	}
+
 	switch msg.String() {
-	case "q", "ctrl+c":
+	case "ctrl+c":
 		return a, tea.Quit
+	case "q":
+		return a, tea.Quit
+	case "esc":
+		return a, toLauncher
 
 	// Up = visually up = toward today (higher dayIdx)
 	case "up", "k":
@@ -199,7 +251,7 @@ func (a *App) updateMain(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "e":
 		a.openEditDay()
 	case "d":
-		a.deleteCurrentDay()
+		a.askDeleteCurrentDay()
 	case "v":
 		a.toggleVacation()
 	case "y":
@@ -277,7 +329,18 @@ func (a *App) openNewDay() {
 	a.editorTA.Reset()
 	a.editorTA.SetValue("")
 	a.editorTA.Focus()
+	a.editorUndo = nil
+	a.editorRedo = nil
 	a.view = viewEditor
+}
+
+// clearEditor wipes the content of the day currently being edited. The
+// change is only persisted if the user then saves with Ctrl+S; Esc still
+// discards it like any other in-progress edit.
+func (a *App) clearEditor() {
+	a.editorTA.Reset()
+	a.editorTA.SetValue("")
+	a.setStatus("Editor cleared.", false)
 }
 
 func (a *App) openEditDay() {
@@ -292,7 +355,62 @@ func (a *App) openEditDay() {
 	a.editorTA.Reset()
 	a.editorTA.SetValue(parser.SerializeDay(day))
 	a.editorTA.Focus()
+	a.editorUndo = nil
+	a.editorRedo = nil
 	a.view = viewEditor
+}
+
+// editorSnapshot captures enough of the editor's state to restore it later
+// for undo/redo.
+type editorSnapshot struct {
+	value string
+	row   int
+	col   int
+}
+
+func snapshotEditor(ta textarea.Model) editorSnapshot {
+	return editorSnapshot{value: ta.Value(), row: ta.Line(), col: ta.LineInfo().ColumnOffset}
+}
+
+// restoreEditor replaces the textarea's content and puts the cursor back
+// where the snapshot recorded it.
+func restoreEditor(ta *textarea.Model, s editorSnapshot) {
+	ta.SetValue(s.value)
+	lines := strings.Split(s.value, "\n")
+	row := max(0, min(s.row, len(lines)-1))
+	for i := 0; i < len(lines)-1-row; i++ {
+		ta.CursorUp()
+	}
+	ta.SetCursor(s.col)
+}
+
+// pushUndo records the editor state as it was before an edit, so it can be
+// restored later, and drops the redo history since it no longer applies.
+func (a *App) pushUndo(before editorSnapshot) {
+	a.editorUndo = append(a.editorUndo, before)
+	a.editorRedo = nil
+}
+
+func (a *App) undoEditor() {
+	if len(a.editorUndo) == 0 {
+		return
+	}
+	n := len(a.editorUndo) - 1
+	prev := a.editorUndo[n]
+	a.editorUndo = a.editorUndo[:n]
+	a.editorRedo = append(a.editorRedo, snapshotEditor(a.editorTA))
+	restoreEditor(&a.editorTA, prev)
+}
+
+func (a *App) redoEditor() {
+	if len(a.editorRedo) == 0 {
+		return
+	}
+	n := len(a.editorRedo) - 1
+	next := a.editorRedo[n]
+	a.editorRedo = a.editorRedo[:n]
+	a.editorUndo = append(a.editorUndo, snapshotEditor(a.editorTA))
+	restoreEditor(&a.editorTA, next)
 }
 
 func (a *App) copyCurrentDay() {
@@ -308,6 +426,16 @@ func (a *App) copyCurrentDay() {
 	}
 }
 
+// askDeleteCurrentDay arms the confirmation prompt in the status bar instead
+// of deleting straight away.
+func (a *App) askDeleteCurrentDay() {
+	if len(a.file.Days) == 0 {
+		return
+	}
+	a.status = ""
+	a.confirmDelete = true
+}
+
 func (a *App) deleteCurrentDay() {
 	if len(a.file.Days) == 0 {
 		return
@@ -320,6 +448,120 @@ func (a *App) deleteCurrentDay() {
 	_ = a.store.Save(a.file)
 	a.setStatus("Day deleted.", false)
 	a.refreshDetail()
+}
+
+// pullTodos appends every open todo to the editor, grouped by note, so a day
+// entry can start from what is actually outstanding.
+func (a *App) pullTodos() {
+	if a.todoText == nil {
+		return
+	}
+	text := strings.TrimRight(a.todoText(), "\n")
+	if text == "" {
+		a.setStatus("No open todos.", false)
+		return
+	}
+
+	before := snapshotEditor(a.editorTA)
+	value := a.editorTA.Value()
+	if strings.TrimSpace(value) != "" {
+		value = strings.TrimRight(value, "\n") + "\n"
+	} else {
+		value = ""
+	}
+	a.editorTA.SetValue(value + text + "\n")
+	a.pushUndo(before)
+	a.setStatus("Open todos pulled in.", false)
+}
+
+// eodGroup is one category worth of items handed over by the todo side.
+type eodGroup struct {
+	Category string
+	Items    []string
+}
+
+// appendToToday files items under today's day entry, creating the day (and the
+// month's file) when needed. Items already present are skipped, so pushing
+// twice in a day is harmless. It returns how many items were actually added.
+func (a *App) appendToToday(groups []eodGroup) (int, error) {
+	now := time.Now()
+	key := fmt.Sprintf("%04d-%02d", now.Year(), int(now.Month()))
+
+	file, ok := a.files[key]
+	if !ok {
+		loaded, err := a.store.Load(now.Year(), int(now.Month()))
+		if err != nil {
+			return 0, err
+		}
+		if loaded == nil {
+			loaded = a.store.NewFile(now.Year(), int(now.Month()))
+		}
+		file = loaded
+		a.files[key] = file
+	}
+
+	day := findOrCreateDay(file, now.Day())
+
+	added := 0
+	for _, g := range groups {
+		cat := findOrCreateCategory(day, g.Category)
+		for _, text := range g.Items {
+			if hasChild(cat, text) {
+				continue
+			}
+			cat.Children = append(cat.Children, &model.Item{Text: text, Depth: 1})
+			added++
+		}
+	}
+	if added == 0 {
+		return 0, nil
+	}
+
+	if err := a.store.Save(file); err != nil {
+		return 0, err
+	}
+	if a.file == file {
+		a.refreshDetail()
+	}
+	return added, nil
+}
+
+func findOrCreateDay(file *model.EODFile, dayNum int) *model.DayEntry {
+	at := len(file.Days)
+	for i, d := range file.Days {
+		if d.Day == dayNum {
+			return d
+		}
+		if d.Day > dayNum {
+			at = i
+			break
+		}
+	}
+	day := &model.DayEntry{Day: dayNum}
+	file.Days = append(file.Days, nil)
+	copy(file.Days[at+1:], file.Days[at:])
+	file.Days[at] = day
+	return day
+}
+
+func findOrCreateCategory(day *model.DayEntry, name string) *model.Item {
+	for _, it := range day.Items {
+		if it.IsCategory && strings.EqualFold(it.Text, name) {
+			return it
+		}
+	}
+	cat := &model.Item{Text: name, IsCategory: true}
+	day.Items = append(day.Items, cat)
+	return cat
+}
+
+func hasChild(item *model.Item, text string) bool {
+	for _, c := range item.Children {
+		if strings.EqualFold(strings.TrimSpace(c.Text), strings.TrimSpace(text)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) toggleVacation() {
@@ -353,6 +595,32 @@ func (a *App) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+s":
 		return a, a.saveEditor()
 
+	case "ctrl+z":
+		// Undo. Terminals don't reliably distinguish Ctrl+Shift+Z from
+		// Ctrl+Z (shift is lost in the control-byte encoding), so redo is
+		// also reachable below via Ctrl+Y, the conventional alternative.
+		a.undoEditor()
+		return a, nil
+
+	case "ctrl+shift+z", "ctrl+y":
+		a.redoEditor()
+		return a, nil
+
+	case "ctrl+t":
+		a.pullTodos()
+		return a, nil
+	}
+
+	// Snapshot before any edit so it can be restored by undoEditor. Only
+	// keep the snapshot if the keystroke actually changed the content.
+	before := snapshotEditor(a.editorTA)
+	defer func() {
+		if a.editorTA.Value() != before.value {
+			a.pushUndo(before)
+		}
+	}()
+
+	switch msg.String() {
 	case "tab":
 		// Insert 4 spaces instead of a tab character
 		a.editorTA, cmd = a.editorTA.Update(
@@ -390,15 +658,24 @@ func (a *App) updateEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return a, cmd
 }
 
-// wordBackwardLen returns how many runes to delete to remove the word before the cursor.
+// wordBackwardLen returns how many runes to delete to remove the word before
+// the cursor. If the cursor sits at the start of a line, it returns 1 so the
+// caller's Backspace merges it with the previous line instead of stalling;
+// the next call then continues eating the previous line's trailing word.
 func wordBackwardLen(ta textarea.Model) int {
 	lines := strings.Split(ta.Value(), "\n")
 	li := ta.Line()
 	if li >= len(lines) {
 		return 0
 	}
-	runes := []rune(lines[li])
 	pos := ta.LineInfo().CharOffset
+	if pos == 0 {
+		if li == 0 {
+			return 0
+		}
+		return 1
+	}
+	runes := []rune(lines[li])
 	start := pos
 	// skip trailing spaces
 	for start > 0 && runes[start-1] == ' ' {
@@ -411,7 +688,10 @@ func wordBackwardLen(ta textarea.Model) int {
 	return pos - start
 }
 
-// wordForwardLen returns how many runes to delete to remove the word after the cursor.
+// wordForwardLen returns how many runes to delete to remove the word after
+// the cursor. If the cursor sits at the end of a line, it returns 1 so the
+// caller's Delete merges it with the next line instead of stalling; the next
+// call then continues eating the next line's leading word.
 func wordForwardLen(ta textarea.Model) int {
 	lines := strings.Split(ta.Value(), "\n")
 	li := ta.Line()
@@ -420,6 +700,12 @@ func wordForwardLen(ta textarea.Model) int {
 	}
 	runes := []rune(lines[li])
 	pos := ta.LineInfo().CharOffset
+	if pos >= len(runes) {
+		if li == len(lines)-1 {
+			return 0
+		}
+		return 1
+	}
 	end := pos
 	// skip leading spaces
 	for end < len(runes) && runes[end] == ' ' {
@@ -792,6 +1078,15 @@ func (a *App) renderStatusBar() string {
 	}
 	bar := strings.Join(hints, "  ")
 
+	if a.confirmDelete && len(a.file.Days) > 0 {
+		day := a.file.Days[a.dayIdx]
+		msg := styleWarn.Render(fmt.Sprintf(
+			"Delete %d.%02d.%02d? [y] yes  [any other key] no",
+			a.file.Year, a.file.Month, day.Day))
+		gap := max(a.width-lipgloss.Width(bar)-lipgloss.Width(msg)-4, 1)
+		return styleStatusBar.Render(bar + strings.Repeat(" ", gap) + msg)
+	}
+
 	if a.status != "" {
 		msg := a.status
 		if a.statusErr {
@@ -823,7 +1118,7 @@ func (a *App) viewEditor() string {
 		title = styleEditorTitle.Render(fmt.Sprintf("Edit: %d.%02d.%02d", a.file.Year, a.file.Month, day.Day))
 	}
 
-	hint := styleHelp.Render("Ctrl+S: save  Esc: cancel  Tab: 4 spaces  Enter: auto-indent")
+	hint := styleHelp.Render("Ctrl+S: save  Esc: cancel  Tab: 4 spaces  Enter: auto-indent  Ctrl+T: pull open todos  Ctrl+Shift+Delete: clear all  Ctrl+Z: undo  Ctrl+Y: redo")
 
 	errLine := ""
 	if a.editorErr != "" {
@@ -902,7 +1197,7 @@ func helpText() string {
   ──────────────────────────────────────
   n           new day (today's date)
   e           edit current day
-  d           delete current day
+  d           delete current day (asks [y] to confirm)
   v           toggle vacation (☀)
 
   Editor keys
@@ -910,6 +1205,7 @@ func helpText() string {
   Tab         insert 4 spaces
   Enter       new line with auto-indent
   Ctrl+S      save
+  Ctrl+T      pull open todos in
   Esc         cancel
 
   Format (same as the txt file):
@@ -923,6 +1219,7 @@ func helpText() string {
   /           search in month
   x           export (md + csv)
   ?           this help
+  Esc         back to the launcher
   q / Ctrl+C  quit
 `
 }
