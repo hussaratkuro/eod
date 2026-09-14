@@ -534,7 +534,8 @@ func todoHelpText() string {
 
   Everywhere
   ──────────────────────────────────────
-  / or Ctrl+P        fuzzy search every task
+  /                  fuzzy search every task
+  Ctrl+Shift+P       fuzzy command palette
   s                  stats: streak, heat, progress
   u                  undo the last change
   Ctrl+E             push today's finished tasks to EOD

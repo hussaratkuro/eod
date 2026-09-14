@@ -43,8 +43,9 @@ type Root struct {
 	sel           int
 	width, height int
 
-	eod  *App
-	todo *TodoApp
+	eod      *App
+	todo     *TodoApp
+	commands rootCommandPalette
 }
 
 func NewRoot(eod *App, todo *TodoApp, start Mode) *Root {
@@ -85,6 +86,13 @@ func (r *Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return r, cmd
 
 	case tea.KeyMsg:
+		if r.commands.open {
+			return r.updateCommandPalette(m)
+		}
+		if (m.String() == "ctrl+p" || m.String() == "ctrl+shift+p") && r.commandPaletteAvailable() {
+			r.openCommandPalette()
+			return r, nil
+		}
 		if r.mode == ModeLauncher {
 			return r.updateLauncher(m)
 		}
@@ -140,6 +148,9 @@ func (r *Root) start(m Mode) {
 }
 
 func (r *Root) View() string {
+	if r.commands.open {
+		return r.viewCommandPalette()
+	}
 	switch r.mode {
 	case ModeTodo:
 		return r.todo.View()
@@ -171,7 +182,7 @@ func (r *Root) viewLauncher() string {
 		}
 	}
 
-	rows = append(rows, "", styleMuted.Render("  [↑/↓] select   [Enter] open   [1/2] jump   [q] quit"))
+	rows = append(rows, "", styleMuted.Render("  [↑/↓] select   [Enter] open   [Ctrl+Shift+P] commands   [q] quit"))
 
 	box := styleMenuBox.Render(strings.Join(rows, "\n"))
 	return lipgloss.Place(r.width, r.height, lipgloss.Center, lipgloss.Center, box)

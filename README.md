@@ -174,7 +174,8 @@ navigation across days and months.
 
 | key              | action                                |
 | ---------------- | ------------------------------------- |
-| `/` `Ctrl+P`     | fuzzy search every task               |
+| `/`              | fuzzy search every task               |
+| `Ctrl+Shift+P`   | fuzzy command palette                 |
 | `s`              | stats: streak, heat strip, progress   |
 | `u`              | undo the last change                  |
 | `Ctrl+E`         | push today's finished tasks to EOD    |
@@ -200,6 +201,10 @@ navigation across days and months.
 | `?`                  | help                          |
 | `Esc`                | back to the launcher          |
 | `q` `Ctrl+C`         | quit                          |
+
+The common `Ctrl+Shift+P` command palette is available from the launcher and
+the non-input Todo/EOD screens. `Ctrl+P` is accepted when the terminal does not
+distinguish the Shift modifier.
 
 ### EOD — editor
 

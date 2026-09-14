@@ -1215,6 +1215,7 @@ func helpText() string {
 
   Other
   ──────────────────────────────────────
+	Ctrl+Shift+P fuzzy command palette
   s           monthly summary
   /           search in month
   x           export (md + csv)
