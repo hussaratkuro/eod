@@ -5,6 +5,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"eod/internal/theme"
 )
 
 // Mode is the top-level screen: the launcher menu, or one of the two apps.
@@ -58,10 +60,14 @@ func NewRoot(eod *App, todo *TodoApp, start Mode) *Root {
 	return r
 }
 
-func (r *Root) Init() tea.Cmd { return nil }
+func (r *Root) Init() tea.Cmd { return theme.Watch() }
 
 func (r *Root) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
+	case theme.ChangedMsg:
+		applyTheme(m.Palette)
+		return r, theme.Watch()
+
 	case tea.WindowSizeMsg:
 		r.width, r.height = m.Width, m.Height
 		r.eod.Update(msg)

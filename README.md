@@ -27,8 +27,10 @@ put in git. No database, no lock-in.
 go build -o eod .          # or: go install .
 ```
 
-Go 1.22+. Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea);
-the palette is Catppuccin Mocha.
+Go 1.22+. Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+The palette follows `~/.cache/hyde/wallbash/shell-colors` at runtime and uses
+Catppuccin Mocha as its fallback. Set `TUI_THEME=catppuccin` to force the
+fallback.
 
 ## Usage
 

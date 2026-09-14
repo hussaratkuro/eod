@@ -1,9 +1,13 @@
 package ui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"github.com/charmbracelet/lipgloss"
 
-// Catppuccin Mocha palette
-const (
+	"eod/internal/theme"
+)
+
+// Catppuccin Mocha fallback; applyTheme replaces it with Wallbash roles.
+var (
 	moBase     = "#1e1e2e"
 	moMantle   = "#181825"
 	moSurface0 = "#313244"
@@ -100,6 +104,65 @@ var (
 				Foreground(lipgloss.Color(moPeach)).
 				Padding(0, 1)
 )
+
+func init() { applyTheme(theme.Current()) }
+
+func applyTheme(p theme.Palette) {
+	moBase, moMantle = string(p.Base), string(p.Mantle)
+	moSurface0, moSurface1, moSurface2 = string(p.Surface0), string(p.Surface1), string(p.Surface2)
+	moOverlay0, moOverlay1, moOverlay2 = string(p.Overlay0), string(p.Overlay1), string(p.Overlay2)
+	moSubtext0, moSubtext1, moText = string(p.Subtext0), string(p.Subtext1), string(p.Text)
+	moLavender, moBlue, moSapphire, moSky = string(p.Lavender), string(p.Blue), string(p.Sapphire), string(p.Sky)
+	moTeal, moGreen, moYellow, moPeach = string(p.Teal), string(p.Green), string(p.Yellow), string(p.Peach)
+	moMaroon, moRed, moMauve, moPink = string(p.Red), string(p.Red), string(p.Mauve), string(p.Pink)
+
+	styleHeader = lipgloss.NewStyle().Bold(true).Foreground(p.Yellow).Padding(0, 1)
+	stylePanelTitle = lipgloss.NewStyle().Bold(true).Foreground(p.Mauve).Padding(0, 1)
+	styleBorder = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(p.Surface1)
+	styleSelected = lipgloss.NewStyle().Background(p.Surface1).Foreground(p.Lavender).Bold(true).Padding(0, 1)
+	styleNormal = lipgloss.NewStyle().Foreground(p.Text).Padding(0, 1)
+	styleMuted = lipgloss.NewStyle().Foreground(p.Overlay1)
+	styleCategory = lipgloss.NewStyle().Bold(true).Foreground(p.Green)
+	styleStatusBar = lipgloss.NewStyle().Foreground(p.Overlay1).Padding(0, 1)
+	styleKey = lipgloss.NewStyle().Foreground(p.Mauve).Bold(true)
+	styleError = lipgloss.NewStyle().Foreground(p.Red).Bold(true)
+	styleSuccess = lipgloss.NewStyle().Foreground(p.Green)
+	styleWarn = lipgloss.NewStyle().Foreground(p.Peach).Bold(true)
+	styleEditorTitle = lipgloss.NewStyle().Bold(true).Foreground(p.Yellow).MarginBottom(1)
+	styleHelp = lipgloss.NewStyle().Foreground(p.Overlay1).Italic(true)
+	styleVacation = lipgloss.NewStyle().Foreground(p.Peach).Bold(true)
+	styleVacationRow = lipgloss.NewStyle().Foreground(p.Peach).Padding(0, 1)
+
+	accentHex = map[string]string{
+		"lavender": moLavender, "blue": moBlue, "sapphire": moSapphire,
+		"sky": moSky, "teal": moTeal, "green": moGreen,
+		"yellow": moYellow, "peach": moPeach, "maroon": moMaroon,
+		"red": moRed, "mauve": moMauve, "pink": moPink,
+	}
+
+	styleWall = lipgloss.NewStyle().Foreground(p.Text)
+	styleCardTitle = lipgloss.NewStyle().Bold(true)
+	styleDone = lipgloss.NewStyle().Foreground(p.Overlay0).Strikethrough(true)
+	styleTag = lipgloss.NewStyle().Foreground(p.Mauve)
+	styleDueOverdue = lipgloss.NewStyle().Foreground(p.Red).Bold(true)
+	styleDueToday = lipgloss.NewStyle().Foreground(p.Peach).Bold(true)
+	styleDueSoon = lipgloss.NewStyle().Foreground(p.Yellow)
+	styleDueLater = lipgloss.NewStyle().Foreground(p.Overlay1)
+	stylePrio = map[int]lipgloss.Style{
+		1: lipgloss.NewStyle().Foreground(p.Red).Bold(true),
+		2: lipgloss.NewStyle().Foreground(p.Peach),
+		3: lipgloss.NewStyle().Foreground(p.Yellow),
+	}
+	styleRepeat = lipgloss.NewStyle().Foreground(p.Sapphire)
+	styleFocus = lipgloss.NewStyle().Foreground(p.Teal).Bold(true)
+	styleCursor = lipgloss.NewStyle().Foreground(p.Lavender).Bold(true)
+	styleProgress = lipgloss.NewStyle().Foreground(p.Green)
+	styleProgressBG = lipgloss.NewStyle().Foreground(p.Surface1)
+	styleLogo = lipgloss.NewStyle().Bold(true).Foreground(p.Mauve)
+	styleMenuItem = lipgloss.NewStyle().Foreground(p.Text).Padding(0, 2)
+	styleMenuSelected = lipgloss.NewStyle().Bold(true).Foreground(p.OnAccent).Background(p.Mauve).Padding(0, 2)
+	styleMenuBox = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(p.Surface2).Padding(1, 4)
+}
 
 func keyHint(key, desc string) string {
 	return styleKey.Render(key) + styleStatusBar.Render(":"+desc)
